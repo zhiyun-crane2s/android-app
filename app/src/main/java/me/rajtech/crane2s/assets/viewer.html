@@ -1,0 +1,50 @@
+
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>WebRTC Viewer</title>
+    <style> video { width: 100%; max-width: 800px; background: #000; } </style>
+</head>
+<body>
+<h3>WebRTC Viewer</h3>
+<video id="v" autoplay playsinline controls></video>
+<script>
+    async function main() {
+      const ws = new WebSocket(`ws://${location.host}/`);
+      const pc = new RTCPeerConnection({
+        iceServers: [{urls: "stun:stun.l.google.com:19302"}]
+      });
+
+      pc.ontrack = (e) => {
+        document.getElementById('v').srcObject = e.streams[0];
+      };
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          ws.send(JSON.stringify({
+            type: "candidate",
+            label: e.candidate.sdpMLineIndex,
+            id: e.candidate.sdpMid,
+            candidate: e.candidate.candidate
+          }));
+        }
+      };
+
+      ws.onmessage = async (msg) => {
+        const data = JSON.parse(msg.data);
+        if (data.type === "answer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        }
+      };
+
+      ws.onopen = async () => {
+        const offer = await pc.createOffer({offerToReceiveVideo: true});
+        await pc.setLocalDescription(offer);
+        ws.send(JSON.stringify({type:"offer", sdp: offer}));
+      };
+    }
+    main();
+</script>
+</body>
+</html>

@@ -18,7 +18,10 @@ import android.util.Size
 import android.view.Surface
 import androidx.annotation.RequiresPermission
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
@@ -108,35 +111,39 @@ class Camera2VideoSource(private val context: Context) {
     }
 
     @RequiresPermission(Manifest.permission.CAMERA)
-    private fun openCamera(cameraId: String) {
-        if (!openCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
-            throw RuntimeException("Time out waiting to lock camera opening.")
-        }
-        manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
-            override fun onOpened(c: CameraDevice) {
-                openCloseLock.release()
-                camera = c
+    private suspend fun openCamera(cameraId: String) =
+        suspendCancellableCoroutine<Unit> { cont ->
+            if (!openCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
+                cont.resumeWithException(RuntimeException("Time out waiting to lock camera opening."))
+                return@suspendCancellableCoroutine
             }
-            override fun onDisconnected(c: CameraDevice) {
-                openCloseLock.release()
-                c.close()
-                camera = null
-            }
-            override fun onError(c: CameraDevice, error: Int) {
-                openCloseLock.release()
-                c.close()
-                camera = null
-                onError?.invoke("Camera error $error")
-            }
-        }, null)
+            manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+                override fun onOpened(c: CameraDevice) {
+                    openCloseLock.release()
+                    camera = c
+                    if (cont.isActive) cont.resume(Unit)
+                }
 
-        // Wait until camera != null
-        val start = System.currentTimeMillis()
-        while (camera == null && System.currentTimeMillis() - start < 2500) {
-            Thread.sleep(10)
+                override fun onDisconnected(c: CameraDevice) {
+                    openCloseLock.release()
+                    c.close()
+                    camera = null
+                    if (cont.isActive) cont.resumeWithException(RuntimeException("Camera disconnected"))
+                }
+
+                override fun onError(c: CameraDevice, error: Int) {
+                    openCloseLock.release()
+                    c.close()
+                    camera = null
+                    onError?.invoke("Camera error $error")
+                    if (cont.isActive) cont.resumeWithException(RuntimeException("Camera error $error"))
+                }
+            }, null)
+
+            cont.invokeOnCancellation {
+                try { openCloseLock.release() } catch (_: Throwable) {}
+            }
         }
-        if (camera == null) throw RuntimeException("Failed to open camera")
-    }
 
     private fun createSession(
         cam: CameraDevice,

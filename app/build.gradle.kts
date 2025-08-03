@@ -28,11 +28,11 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = "17"
     }
 }
 
@@ -46,17 +46,10 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 
-    implementation("com.infobip:google-webrtc:1.0.45036")
-    implementation( files("libs/libausbc-3.3.3.aar"))
-//    implementation("com.github.jiangdongguo.AndroidUSBCamera:libausbc:3.2.10")
-
-    implementation("io.ktor:ktor-server-core-jvm:3.2.3")
-    implementation("io.ktor:ktor-server-cio-jvm:3.2.3")
-    implementation("io.ktor:ktor-server-websockets-jvm:3.2.3")
-    implementation("io.ktor:ktor-server-content-negotiation-jvm:3.2.3")
-    implementation("io.ktor:ktor-serialization-gson-jvm:3.2.3")
-
-
-    implementation("com.google.code.gson:gson:2.13.1")
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.activity:activity-ktx:1.9.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
 

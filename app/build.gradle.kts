@@ -51,5 +51,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-}
 
+    // UVC Camera library
+    implementation(files("libs/libausbc-3.3.3.aar"))
+}

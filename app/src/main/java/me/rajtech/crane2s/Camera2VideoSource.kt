@@ -13,6 +13,8 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.StreamConfigurationMap
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
 import android.util.Range
 import android.util.Size
 import android.view.Surface
@@ -25,6 +27,7 @@ import kotlin.coroutines.resumeWithException
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import java.util.concurrent.Executors
 
 class Camera2VideoSource(private val context: Context) {
 
@@ -37,7 +40,9 @@ class Camera2VideoSource(private val context: Context) {
     private var camera: CameraDevice? = null
     private var session: CameraCaptureSession? = null
     private val openCloseLock = Semaphore(1)
+    private val backgroundExecutor = Executors.newSingleThreadExecutor()
 
+    @RequiresPermission(Manifest.permission.CAMERA)
     suspend fun start(
         previewSurface: Surface,
         encoderSurface: Surface,
@@ -45,6 +50,12 @@ class Camera2VideoSource(private val context: Context) {
         desiredFps: Int
     ) = withContext(Dispatchers.Main) {
         try {
+            // Check permission before proceeding
+            if (context.checkSelfPermission(Manifest.permission.CAMERA)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                throw SecurityException("Camera permission not granted")
+            }
+
             val id = chooseCameraId()
             onInfo?.invoke("Using camera: $id")
             openCamera(id)
@@ -150,14 +161,21 @@ class Camera2VideoSource(private val context: Context) {
         targets: List<Surface>,
         onReady: (CameraCaptureSession) -> Unit
     ) {
-        cam.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
-            override fun onConfigured(session: CameraCaptureSession) {
-                this@Camera2VideoSource.session = session
-                onReady(session)
+        val outputConfigs = targets.map { OutputConfiguration(it) }
+        val sessionConfig = SessionConfiguration(
+            SessionConfiguration.SESSION_REGULAR,
+            outputConfigs,
+            backgroundExecutor,
+            object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(session: CameraCaptureSession) {
+                    this@Camera2VideoSource.session = session
+                    onReady(session)
+                }
+                override fun onConfigureFailed(session: CameraCaptureSession) {
+                    onError?.invoke("CaptureSession configure failed")
+                }
             }
-            override fun onConfigureFailed(session: CameraCaptureSession) {
-                onError?.invoke("CaptureSession configure failed")
-            }
-        }, null)
+        )
+        cam.createCaptureSession(sessionConfig)
     }
 }

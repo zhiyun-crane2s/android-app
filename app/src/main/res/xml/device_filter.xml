@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Generic UVC (USB Video Class) device filter -->
+    <usb-device class="14" subclass="1" protocol="0" />
+    <usb-device class="14" subclass="2" protocol="0" />
+
+    <!-- Common capture card vendor IDs -->
+    <usb-device vendor-id="1234" />  <!-- Generic -->
+    <usb-device vendor-id="0x534d" />  <!-- MacroSilicon -->
+    <usb-device vendor-id="0x05e3" />  <!-- Genesys Logic -->
+    <usb-device vendor-id="0x1b80" />  <!-- Generic capture card -->
+</resources>
+

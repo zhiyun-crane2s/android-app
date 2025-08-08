@@ -24,6 +24,11 @@ class DebugOverlay @JvmOverloads constructor(
     private val maxLines = 50
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
 
+    // Throttling variables to prevent UI flood
+    private var lastUpdateTime = 0L
+    private val updateThrottleMs = 100L // Only update UI every 100ms
+    private var pendingUpdate = false
+
     init {
         // Create scroll view
         scrollView = ScrollView(context).apply {
@@ -61,25 +66,54 @@ class DebugOverlay @JvmOverloads constructor(
         val timestamp = timeFormat.format(Date())
         val logEntry = "$timestamp $level/$tag: $message"
 
-        post {
-            logQueue.offer(logEntry)
+        // Add to queue immediately (thread-safe)
+        logQueue.offer(logEntry)
 
-            // Keep only last maxLines
-            while (logQueue.size > maxLines) {
-                logQueue.poll()
-            }
+        // Keep only last maxLines
+        while (logQueue.size > maxLines) {
+            logQueue.poll()
+        }
 
+        // More aggressive throttling to prevent ANY UI performance issues
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastUpdateTime > updateThrottleMs && !pendingUpdate) {
+            pendingUpdate = true
+            lastUpdateTime = currentTime
+
+            // Use postDelayed instead of post for better performance
+            postDelayed({
+                try {
+                    updateDisplay()
+                } finally {
+                    pendingUpdate = false
+                }
+            }, 50) // Small delay to batch operations
+        } else if (!pendingUpdate) {
+            // Schedule a delayed update if we're throttling - with longer delay
+            pendingUpdate = true
+            postDelayed({
+                try {
+                    updateDisplay()
+                } finally {
+                    pendingUpdate = false
+                }
+            }, updateThrottleMs + 50) // Extra delay for performance
+        }
+    }
+
+    private fun updateDisplay() {
+        try {
             // Update display
             val allLogs = logQueue.joinToString("\n")
             logTextView.text = allLogs
 
-            // Auto-scroll to bottom
-            scrollView.post {
-                scrollView.fullScroll(ScrollView.FOCUS_DOWN)
-            }
+            // Auto-scroll to bottom (combine into single operation)
+            scrollView.fullScroll(ScrollView.FOCUS_DOWN)
 
             // Show overlay if debug mode is enabled
             visibility = if (SettingsActivity.isDebugModeEnabled(context)) VISIBLE else GONE
+        } catch (e: Exception) {
+            Log.e("DebugOverlay", "Error updating display: ${e.message}")
         }
     }
 
@@ -89,6 +123,8 @@ class DebugOverlay @JvmOverloads constructor(
 
     fun clear() {
         logQueue.clear()
-        logTextView.text = ""
+        post {
+            logTextView.text = ""
+        }
     }
 }

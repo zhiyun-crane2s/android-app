@@ -1,16 +1,13 @@
 package me.rajtech.crane2s
 
-import android.hardware.usb.UsbDevice
 import android.os.Bundle
 import android.util.Log
-import android.view.Surface
+import android.view.TextureView
 import android.widget.Button
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.appcompat.app.AppCompatDelegate
-import com.jiangdongguo.usbcamera.UVCCameraHelper
-import com.jiangdongguo.usbcamera.UVCCameraTextureView
-import com.jiangdongguo.usbcamera.utils.FileUtils
+import com.jiangdg.usbcamera.UVCCameraHelper
 import kotlinx.coroutines.*
 
 class StreamActivity : ComponentActivity() {
@@ -22,32 +19,25 @@ class StreamActivity : ComponentActivity() {
     }
 
     private var debugOverlay: DebugOverlay? = null
-    private lateinit var mUVCCameraView: UVCCameraTextureView
+    private lateinit var textureView: TextureView
     private lateinit var btnStart: Button
 
-    private var mCameraHelper: UVCCameraHelper? = null
-    private var isRequest = false
-    private var isConnect = false
-    private var isPreview = false
+    private var cameraSource: UVCVideoSource? = null
+    private var isPreviewing = false
 
     private var encoder: H264Encoder? = null
     private var rtspServer: RtspServer? = null
-    private var encoderSurface: Surface? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Apply theme before super.onCreate()
         applyTheme()
-
         super.onCreate(savedInstanceState)
-        debugLog("onCreate called")
-
         setContentView(R.layout.activity_stream)
 
         initViews()
-        initUVCCamera()
-        setupEncoder()
+        setupCameraSource()
+        setupEncoderAndServer()
     }
 
     private fun applyTheme() {
@@ -69,13 +59,10 @@ class StreamActivity : ComponentActivity() {
     }
 
     private fun initViews() {
-        mUVCCameraView = findViewById(R.id.uvc_view)
+        textureView = findViewById(R.id.texture_view)
         btnStart = findViewById(R.id.btn_start)
-
-        // Create debug overlay
         debugOverlay = DebugOverlay(this)
 
-        // Add debug overlay to the root container
         val rootContainer = findViewById<android.widget.FrameLayout>(R.id.stream_container)
         rootContainer.addView(
             debugOverlay,
@@ -86,208 +73,90 @@ class StreamActivity : ComponentActivity() {
                 gravity = android.view.Gravity.BOTTOM
             }
         )
-
         debugOverlay?.updateVisibility()
 
         btnStart.setOnClickListener {
-            if (!isConnect) {
-                debugLog("Attempting to connect to UVC camera...")
-                mCameraHelper?.requestPermission(0)
+            if (isPreviewing) {
+                stopPreview()
             } else {
-                if (isPreview) {
-                    debugLog("Stopping camera preview")
-                    mCameraHelper?.stopPreview()
-                    stopStreaming()
-                    btnStart.text = "Start Camera"
-                    isPreview = false
-                } else {
-                    debugLog("Starting camera preview")
-                    mCameraHelper?.startPreview(mUVCCameraView)
-                    startStreaming()
-                    btnStart.text = "Stop Camera"
-                    isPreview = true
-                }
+                startPreview()
             }
         }
-
         debugLog("Views initialized")
     }
 
-    private fun initUVCCamera() {
-        debugLog("Initializing UVC camera helper")
-
-        // Set callback for the UVC camera view
-        mUVCCameraView.setCallback(object : UVCCameraTextureView.CameraViewInterface.Callback {
-            override fun onSurfaceCreated(view: UVCCameraTextureView.CameraViewInterface?, surface: Surface?) {
-                debugLog("UVC Camera surface created")
-                if (!isPreview && mCameraHelper?.isCameraOpened == true) {
-                    mCameraHelper?.startPreview(mUVCCameraView)
-                    isPreview = true
-                    btnStart.text = "Stop Camera"
+    private fun setupCameraSource() {
+        cameraSource = UVCVideoSource(this).apply {
+            onInfo = { info ->
+                debugLog("UVC Info: $info")
+                showToast(info)
+            }
+            onError = { error ->
+                debugLog("UVC Error: $error", "E")
+                showToast("Error: $error")
+                if (isPreviewing) {
+                    stopPreview()
                 }
             }
-
-            override fun onSurfaceChanged(view: UVCCameraTextureView.CameraViewInterface?, surface: Surface?, width: Int, height: Int) {
-                debugLog("UVC Camera surface changed: ${width}x${height}")
+            onFrameGenerated = { data, _, _ ->
+                encoder?.input(data)
             }
+            initialize(textureView)
+        }
+    }
 
-            override fun onSurfaceDestroy(view: UVCCameraTextureView.CameraViewInterface?, surface: Surface?) {
-                debugLog("UVC Camera surface destroyed")
-                if (isPreview && mCameraHelper?.isCameraOpened == true) {
-                    mCameraHelper?.stopPreview()
-                    isPreview = false
+    private fun setupEncoderAndServer() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                debugLog("Setting up H.264 encoder")
+                encoder = H264Encoder(PREVIEW_WIDTH, PREVIEW_HEIGHT, 30, 4000000).apply {
+                    onFrame = { data, isKeyFrame ->
+                        rtspServer?.sendVideo(data, isKeyFrame)
+                    }
+                    start()
                 }
-            }
-        })
+                debugLog("H.264 encoder started")
 
-        mCameraHelper = UVCCameraHelper.getInstance()
-
-        mCameraHelper?.let { helper ->
-            helper.setDefaultFrameFormat(UVCCameraHelper.FRAME_FORMAT_MJPEG)
-            helper.initUSBMonitor(this, mUVCCameraView, listener)
-            helper.setOnPreviewFrameListener { nv21Yuv ->
-                // This callback receives raw camera frames
-                debugLog("Received frame: ${nv21Yuv?.size ?: 0} bytes")
-            }
-        }
-
-        debugLog("UVC camera helper initialized")
-    }
-
-    private fun setupEncoder() {
-        debugLog("Setting up H.264 encoder")
-
-        try {
-            val width = PREVIEW_WIDTH
-            val height = PREVIEW_HEIGHT
-            val fps = 30
-            val bitrate = 4_000_000
-
-            encoder = H264Encoder(width, height, fps, bitrate).also { enc ->
-                enc.start()
-                encoderSurface = enc.inputSurface
-                debugLog("H.264 encoder started: ${width}x${height}@${fps}fps")
-            }
-
-            // Start RTSP server
-            rtspServer = RtspServer(
-                port = 8554,
-                spsProvider = { encoder?.lastSps ?: ByteArray(0) },
-                ppsProvider = { encoder?.lastPps ?: ByteArray(0) }
-            ).also { server ->
-                server.start(scope)
-                debugLog("RTSP server started on port 8554")
-            }
-
-            // Connect encoder output to RTSP
-            encoder?.onFrameEncoded = { accessUnit, isKey, pts ->
-                rtspServer?.pushH264AccessUnit(accessUnit, isKey, pts)
-            }
-
-        } catch (e: Exception) {
-            debugLog("Error setting up encoder: ${e.message}", "E")
-        }
-    }
-
-    private fun startStreaming() {
-        debugLog("Starting RTSP streaming...")
-        showShortMsg("RTSP stream available at rtsp://0.0.0.0:8554/stream")
-    }
-
-    private fun stopStreaming() {
-        debugLog("Stopping streaming...")
-        runCatching { encoder?.stop() }
-        runCatching { rtspServer?.stop() }
-    }
-
-    // UVCCameraHelper listener
-    private val listener = object : UVCCameraHelper.OnMyDevConnectListener {
-        override fun onAttachDev(device: UsbDevice?) {
-            debugLog("USB device attached: ${device?.deviceName}")
-            // Request permission automatically when device is attached
-            if (!isRequest) {
-                isRequest = true
-                mCameraHelper?.requestPermission(0)
-            }
-        }
-
-        override fun onDettachDev(device: UsbDevice?) {
-            debugLog("USB device detached: ${device?.deviceName}")
-            if (isRequest) {
-                isRequest = false
-                mCameraHelper?.closeCamera()
-                showShortMsg("USB device detached")
-                isConnect = false
-                isPreview = false
-                runOnUiThread {
-                    btnStart.text = "Start Camera"
+                debugLog("Creating RTSP server")
+                rtspServer = RtspServer().apply {
+                    start()
                 }
-            }
-        }
-
-        override fun onConnectDev(device: UsbDevice?, isConnected: Boolean) {
-            debugLog("USB device connect result: $isConnected")
-            if (!isConnected) {
-                showShortMsg("Failed to connect USB device")
-                isPreview = false
-                isRequest = false
-                isConnect = false
-                runOnUiThread {
-                    btnStart.text = "Start Camera"
-                }
-            } else {
-                isConnect = true
-                showShortMsg("USB device connected - Ready to preview")
-                runOnUiThread {
-                    btnStart.text = "Start Preview"
-                }
-            }
-        }
-
-        override fun onDisConnectDev(device: UsbDevice?) {
-            debugLog("USB device disconnected")
-            showShortMsg("USB device disconnected")
-            isPreview = false
-            isRequest = false
-            isConnect = false
-            runOnUiThread {
-                btnStart.text = "Start Camera"
+                debugLog("RTSP server started")
+            } catch (e: Exception) {
+                debugLog("Encoder/RTSP setup failed: ${e.message}", "E")
+                showToast("Encoder/RTSP setup failed")
             }
         }
     }
 
-    private fun showShortMsg(msg: String) {
-        runOnUiThread {
-            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-        }
-        debugLog("Toast: $msg")
+    private fun startPreview() {
+        if (isPreviewing) return
+        debugLog("Starting preview...")
+        cameraSource?.startCamera()
+        isPreviewing = true
+        btnStart.text = "Stop Camera"
     }
 
-    override fun onStart() {
-        super.onStart()
-        debugLog("onStart called")
-        mCameraHelper?.registerUSB()
-    }
-
-    override fun onStop() {
-        super.onStop()
-        debugLog("onStop called")
-        mCameraHelper?.unregisterUSB()
+    private fun stopPreview() {
+        if (!isPreviewing) return
+        debugLog("Stopping preview...")
+        cameraSource?.stopCamera()
+        isPreviewing = false
+        btnStart.text = "Start Camera"
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        debugLog("onDestroy called")
-
-        FileUtils.releaseFile()
-        mCameraHelper?.release()
-
-        stopStreaming()
         scope.cancel()
+        cameraSource?.release()
+        encoder?.stop()
+        rtspServer?.stop()
+        debugLog("StreamActivity destroyed")
     }
 
-    override fun onResume() {
-        super.onResume()
-        debugOverlay?.updateVisibility()
+    private fun showToast(message: String) {
+        runOnUiThread {
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
     }
 }

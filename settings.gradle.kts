@@ -27,3 +27,12 @@ dependencyResolutionManagement {
 
 rootProject.name = "Zhiyun Crane 2S Suite"
 include(":app")
+
+
+
+// ADD THESE TWO LINES:
+include(":libuvccamera", ":usbCameraCommon")
+
+// Point them to where you copied the folders:
+project(":libuvccamera").projectDir = file("third_party/uvccamera/libuvccamera")
+project(":usbCameraCommon").projectDir = file("third_party/uvccamera/usbCameraCommon")

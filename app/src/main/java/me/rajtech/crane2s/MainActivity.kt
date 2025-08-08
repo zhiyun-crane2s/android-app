@@ -4,7 +4,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
-import androidx.appcompat.app.AppCompatDelegate
 import com.google.android.material.button.MaterialButton
 
 class MainActivity : ComponentActivity() {
@@ -14,9 +13,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Apply theme before super.onCreate()
-        applyTheme()
-
         super.onCreate(savedInstanceState)
         Log.d(TAG, "onCreate called - Loading homepage")
 
@@ -27,14 +23,6 @@ class MainActivity : ComponentActivity() {
         setupButtonListeners()
 
         Log.d(TAG, "Homepage loaded successfully")
-    }
-
-    private fun applyTheme() {
-        val isDarkMode = SettingsActivity.isDarkModeEnabled(this)
-        AppCompatDelegate.setDefaultNightMode(
-            if (isDarkMode) AppCompatDelegate.MODE_NIGHT_YES
-            else AppCompatDelegate.MODE_NIGHT_NO
-        )
     }
 
     private fun setupButtonListeners() {
@@ -59,15 +47,8 @@ class MainActivity : ComponentActivity() {
 
         // Settings button
         findViewById<android.widget.ImageButton>(R.id.btn_settings).setOnClickListener {
-            Log.d(TAG, "Settings button clicked - navigating to SettingsActivity")
-            val intent = Intent(this, SettingsActivity::class.java)
-            startActivity(intent)
+            Log.d(TAG, "Settings button clicked")
+            // TODO: Navigate to settings activity when implemented
         }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // Reapply theme in case it was changed in settings
-        applyTheme()
     }
 }
